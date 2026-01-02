@@ -19,7 +19,6 @@ pub fn update_signed_out() {
                 state.set_user_info(None);
                 state.set_token_expiry(None);
             }
-            MenuBar::update_title(mtm, "Azure");
             MenuBar::build_signed_out_menu(mtm);
             info!("UI updated: signed out");
         }
@@ -33,7 +32,6 @@ pub fn update_authenticating() {
             if let Some(state) = get_app_state() {
                 state.set_auth_state(AuthState::Authenticating);
             }
-            MenuBar::update_title(mtm, "Azure...");
             MenuBar::build_authenticating_menu(mtm);
             info!("UI updated: authenticating");
         }
@@ -49,7 +47,6 @@ pub fn update_signed_in(user_info: UserInfo, expires_at: DateTime<Utc>) {
                 state.set_user_info(Some(user_info));
                 state.set_token_expiry(Some(expires_at));
             }
-            MenuBar::update_title(mtm, "Azure");
             MenuBar::build_signed_in_menu(mtm);
             info!("UI updated: signed in");
         }
@@ -65,7 +62,6 @@ pub fn update_error(message: String) {
                     message: message.clone(),
                 });
             }
-            MenuBar::update_title(mtm, "Azure!");
             MenuBar::build_error_menu(mtm, &message);
             info!("UI updated: error - {}", message);
         }

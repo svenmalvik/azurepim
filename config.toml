@@ -16,7 +16,8 @@ client_id = "f6624b3b-a706-4248-8d8d-c538f0eec0ce"
 tenant = "805bc25d-8e64-4ed6-8d24-3883c9068c5a"
 
 # OAuth redirect URI - must match Azure AD app registration
-redirect_uri = "azurepim://callback"
+# Using localhost for better browser UX (shows success page)
+redirect_uri = "http://localhost:28491/callback"
 
 [oauth.scopes]
 # Microsoft Graph API permissions (delegated)

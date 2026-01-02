@@ -32,7 +32,8 @@ pub fn get_menu_bar() -> Option<&'static Mutex<MenuBarInner>> {
 
 /// Menu bar wrapper that holds the status item and menu.
 pub struct MenuBarInner {
-    pub status_item: Retained<NSStatusItem>,
+    /// Retained to keep the status item alive (never read, but must not be dropped).
+    _status_item: Retained<NSStatusItem>,
     pub menu: Retained<NSMenu>,
     pub action_target: Retained<MenuActionTarget>,
 }
@@ -80,7 +81,7 @@ impl MenuBarInner {
             status_item.setMenu(Some(&menu));
 
             Self {
-                status_item,
+                _status_item: status_item,
                 menu,
                 action_target,
             }
@@ -340,18 +341,6 @@ impl MenuBar {
         }
     }
 
-    /// Update the menu bar icon/title.
-    pub fn update_title(mtm: MainThreadMarker, title: &str) {
-        if let Some(menu_bar) = get_menu_bar() {
-            let inner = menu_bar.lock().unwrap();
-            unsafe {
-                if let Some(button) = inner.status_item.button(mtm) {
-                    let ns_title = NSString::from_str(title);
-                    button.setTitle(&ns_title);
-                }
-            }
-        }
-    }
 }
 
 /// Create a menu item with the given title, action, and optional target.

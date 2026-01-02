@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_parse_callback_success() {
-        let url = "azurepim://callback?code=abc123&state=xyz789";
+        let url = "http://localhost:28491/callback?code=abc123&state=xyz789";
         let (code, state) = parse_callback_url(url).unwrap();
         assert_eq!(code, "abc123");
         assert_eq!(state, "xyz789");
@@ -259,14 +259,14 @@ mod tests {
 
     #[test]
     fn test_parse_callback_error() {
-        let url = "azurepim://callback?error=access_denied&error_description=User%20cancelled";
+        let url = "http://localhost:28491/callback?error=access_denied&error_description=User%20cancelled";
         let result = parse_callback_url(url);
         assert!(matches!(result, Err(AuthError::OAuthFailed(_))));
     }
 
     #[test]
     fn test_parse_callback_missing_code() {
-        let url = "azurepim://callback?state=xyz789";
+        let url = "http://localhost:28491/callback?state=xyz789";
         let result = parse_callback_url(url);
         assert!(matches!(result, Err(AuthError::InvalidAuthCode)));
     }

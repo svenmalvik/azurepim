@@ -22,7 +22,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use app::delegate::{init_callback_channel, AppDelegate};
+use app::delegate::AppDelegate;
+use auth::callback_server::{self, CallbackResult};
 use auth::graph::{GraphClient, UserInfo};
 use auth::oauth::{parse_callback_url, OAuth2Client, PkceChallenge};
 use config::Config;
@@ -73,8 +74,7 @@ fn main() {
     // Create Graph client
     let graph_client = Arc::new(GraphClient::new().expect("Failed to create Graph client"));
 
-    // Initialize channels
-    let callback_rx = init_callback_channel();
+    // Initialize action channel
     let action_rx = init_action_channel();
 
     // Get shared NSApplication
@@ -98,14 +98,7 @@ fn main() {
     let graph_clone = Arc::clone(&graph_client);
 
     runtime.spawn(async move {
-        run_background_tasks(
-            config_clone,
-            oauth_clone,
-            graph_clone,
-            callback_rx,
-            action_rx,
-        )
-        .await;
+        run_background_tasks(config_clone, oauth_clone, graph_clone, action_rx).await;
     });
 
     // Try to restore session from Keychain
@@ -202,9 +195,14 @@ async fn run_background_tasks(
     _config: Config,
     oauth_client: Arc<OAuth2Client>,
     graph_client: Arc<GraphClient>,
-    mut callback_rx: mpsc::Receiver<String>,
     mut action_rx: mpsc::Receiver<MenuAction>,
 ) {
+    // Channel to receive callback results from the HTTP server
+    let (callback_tx, mut callback_rx) = mpsc::channel::<CallbackResult>(1);
+
+    // Channel to cancel the callback server
+    let mut cancel_tx: Option<std::sync::mpsc::Sender<()>> = None;
+
     // State for in-progress OAuth flow
     let mut pending_pkce: Option<PkceChallenge> = None;
     let mut pending_state: Option<String> = None;
@@ -224,11 +222,26 @@ async fn run_background_tasks(
 
                         // Store for callback verification
                         pending_pkce = Some(pkce);
-                        pending_state = Some(state);
+                        pending_state = Some(state.clone());
+
+                        // Create cancellation channel
+                        let (ctx, crx) = std::sync::mpsc::channel();
+                        cancel_tx = Some(ctx);
+
+                        // Start callback server in a separate thread
+                        let tx = callback_tx.clone();
+                        std::thread::spawn(move || {
+                            let result = callback_server::start_callback_server(crx);
+                            let _ = tx.blocking_send(result);
+                        });
 
                         // Open browser
                         if let Err(e) = open::that(auth_url.as_str()) {
                             error!("Failed to open browser: {}", e);
+                            // Cancel the server
+                            if let Some(ctx) = cancel_tx.take() {
+                                let _ = ctx.send(());
+                            }
                             updates::update_error("Failed to open browser".to_string());
                         }
                     }
@@ -279,6 +292,10 @@ async fn run_background_tasks(
                     }
                     MenuAction::CancelSignIn => {
                         info!("Sign-in cancelled");
+                        // Cancel the callback server
+                        if let Some(ctx) = cancel_tx.take() {
+                            let _ = ctx.send(());
+                        }
                         pending_pkce = None;
                         pending_state = None;
                         updates::update_signed_out();
@@ -286,25 +303,43 @@ async fn run_background_tasks(
                 }
             }
 
-            // Handle OAuth callbacks
-            Some(url_string) = callback_rx.recv() => {
-                info!("Received OAuth callback");
+            // Handle OAuth callbacks from the HTTP server
+            Some(callback_result) = callback_rx.recv() => {
+                cancel_tx = None; // Server is done
 
-                let result = handle_oauth_callback(
-                    &url_string,
-                    pending_pkce.take(),
-                    pending_state.take(),
-                    &oauth_client,
-                    &graph_client,
-                ).await;
+                match callback_result {
+                    CallbackResult::Success(url_string) => {
+                        info!("Received OAuth callback from server");
 
-                match result {
-                    Ok((user_info, expires_at)) => {
-                        updates::update_signed_in(user_info, expires_at);
+                        let result = handle_oauth_callback(
+                            &url_string,
+                            pending_pkce.take(),
+                            pending_state.take(),
+                            &oauth_client,
+                            &graph_client,
+                        ).await;
+
+                        match result {
+                            Ok((user_info, expires_at)) => {
+                                updates::update_signed_in(user_info, expires_at);
+                            }
+                            Err(e) => {
+                                error!("OAuth callback error: {}", e);
+                                updates::update_error(e.to_string());
+                            }
+                        }
                     }
-                    Err(e) => {
-                        error!("OAuth callback error: {}", e);
-                        updates::update_error(e.to_string());
+                    CallbackResult::Cancelled => {
+                        info!("OAuth callback server was cancelled");
+                        pending_pkce = None;
+                        pending_state = None;
+                        // Don't update UI - already handled by CancelSignIn
+                    }
+                    CallbackResult::Error(e) => {
+                        error!("Callback server error: {}", e);
+                        pending_pkce = None;
+                        pending_state = None;
+                        updates::update_error(format!("Authentication error: {}", e));
                     }
                 }
             }

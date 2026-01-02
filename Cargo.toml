@@ -59,6 +59,7 @@ base64 = "0.22"
 rand = "0.8"
 sha2 = "0.10"
 open = "5.0"
+urlencoding = "2.1"
 
 # Security
 zeroize = { version = "1.7", features = ["derive"] }
