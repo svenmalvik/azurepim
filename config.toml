@@ -1,0 +1,43 @@
+# Azure PIM Configuration
+# Copy this file to config.local.toml and fill in your Azure AD app details
+
+[app]
+name = "Azure PIM"
+version = "0.1.0"
+bundle_identifier = "de.malvik.azurepim.desktop"
+
+[oauth]
+# Azure AD App Registration - Get these from Azure Portal
+# App registrations > Your App > Overview
+client_id = "f6624b3b-a706-4248-8d8d-c538f0eec0ce"
+
+# Tenant ID - Get from Azure Portal > Azure Active Directory > Overview
+# Use your specific tenant ID for single-tenant apps
+tenant = "805bc25d-8e64-4ed6-8d24-3883c9068c5a"
+
+# OAuth redirect URI - must match Azure AD app registration
+redirect_uri = "azurepim://callback"
+
+[oauth.scopes]
+# Microsoft Graph API permissions (delegated)
+scopes = [
+    "https://graph.microsoft.com/User.Read",
+    "openid",
+    "profile",
+    "email",
+    "offline_access"
+]
+
+[api]
+# Microsoft Graph API base URL
+graph_base_url = "https://graph.microsoft.com/v1.0"
+
+[token]
+# Refresh token this many seconds before expiry
+refresh_before_expiry_seconds = 300
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+# Log file location (relative to ~/Library/Logs/)
+log_dir = "azurepim"

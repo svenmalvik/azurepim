@@ -1,0 +1,48 @@
+# Rust build artifacts
+/target/
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.iml
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+*.dSYM/
+*.dSYM
+
+# Thumbnails
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+config.local.toml
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+*.app
+*.dmg
+*.pkg
+*.zip
+
+# Crash reports
+*.crash
+
+# Xcode (if any)
+*.xcworkspace/
+*.xcuserdata/
+DerivedData/
+
+# Claude Code local settings
+.claude/*.local.md
