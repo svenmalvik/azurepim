@@ -23,8 +23,11 @@ redirect_uri = "http://localhost:28491/callback"
 
 [oauth.scopes]
 # Microsoft Graph API permissions (delegated)
+# Note: Azure Management API scope must be acquired separately via token exchange
+# because Azure AD doesn't allow multiple resources in a single token request
 scopes = [
     "https://graph.microsoft.com/User.Read",
+    "https://graph.microsoft.com/GroupMember.Read.All",
     "openid",
     "profile",
     "email",
@@ -34,6 +37,8 @@ scopes = [
 [api]
 # Microsoft Graph API base URL
 graph_base_url = "https://graph.microsoft.com/v1.0"
+# Azure Management API base URL (for PIM operations)
+management_base_url = "https://management.azure.com"
 
 [token]
 # Refresh token this many seconds before expiry

@@ -1,7 +1,8 @@
 //! Menu bar and menu construction using AppKit.
 
-use crate::menubar::delegate::MenuActionTarget;
-use crate::menubar::state::{get_app_state, AuthState};
+use crate::menubar::delegate::{send_activate_role, send_toggle_favorite, MenuActionTarget};
+use crate::menubar::state::{get_app_state, AuthState, PimState};
+use crate::pim::{EligibleRole, JustificationPreset, PimApiStatus};
 use objc2::rc::Retained;
 use objc2::runtime::Sel;
 use objc2::sel;
@@ -234,6 +235,12 @@ impl MenuBar {
                 }
             }
 
+            // PIM Section
+            if let Some(state) = app_state.as_ref() {
+                let pim_state = state.get_pim_state();
+                add_pim_section(mtm, menu, &pim_state, target);
+            }
+
             // Separator
             let separator = NSMenuItem::separatorItem(mtm);
             menu.addItem(&separator);
@@ -426,4 +433,291 @@ fn create_settings_submenu(
     menu.addItem(&clear_item);
 
     menu
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PIM Menu Section
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Add the PIM section to the menu.
+fn add_pim_section(
+    mtm: MainThreadMarker,
+    menu: &NSMenu,
+    pim_state: &PimState,
+    target: Option<&MenuActionTarget>,
+) {
+    // Separator before PIM section
+    let separator = NSMenuItem::separatorItem(mtm);
+    menu.addItem(&separator);
+
+    // Active Roles Section (if any)
+    if !pim_state.active_assignments.is_empty() {
+        let header_text = format!("Active Roles ({})", pim_state.active_assignments.len());
+        let header = create_menu_item(mtm, &header_text, None, None);
+        unsafe {
+            header.setEnabled(false);
+        }
+        menu.addItem(&header);
+
+        for assignment in &pim_state.active_assignments {
+            let item_text = assignment.display_text_with_time();
+            let item = create_menu_item(mtm, &item_text, None, None);
+            unsafe {
+                item.setEnabled(false);
+            }
+            menu.addItem(&item);
+        }
+
+        // Separator after active roles
+        let separator = NSMenuItem::separatorItem(mtm);
+        menu.addItem(&separator);
+    }
+
+    // PIM Roles Header with status indicator
+    let header_text = match &pim_state.api_status {
+        PimApiStatus::Loading => "PIM Roles (loading...)",
+        PimApiStatus::Unknown => "PIM Roles",
+        PimApiStatus::Available => "PIM Roles",
+        PimApiStatus::PermissionDenied { .. } => "PIM Roles (no access)",
+        PimApiStatus::Unavailable { .. } => "PIM Roles (error)",
+    };
+    let header = create_menu_item(mtm, header_text, None, None);
+    unsafe {
+        header.setEnabled(false);
+    }
+    menu.addItem(&header);
+
+    // Handle different states
+    match &pim_state.api_status {
+        PimApiStatus::Loading => {
+            // Show loading indicator
+            let loading_item = create_menu_item(mtm, "  Loading roles...", None, None);
+            unsafe {
+                loading_item.setEnabled(false);
+            }
+            menu.addItem(&loading_item);
+        }
+        PimApiStatus::PermissionDenied { message } => {
+            let error_item = create_menu_item(mtm, &format!("  {}", message), None, None);
+            unsafe {
+                error_item.setEnabled(false);
+            }
+            menu.addItem(&error_item);
+        }
+        PimApiStatus::Unavailable { error } => {
+            let error_item = create_menu_item(mtm, &format!("  {}", error), None, None);
+            unsafe {
+                error_item.setEnabled(false);
+            }
+            menu.addItem(&error_item);
+        }
+        PimApiStatus::Unknown | PimApiStatus::Available => {
+            if pim_state.eligible_roles.is_empty() {
+                let empty_item = create_menu_item(mtm, "  No eligible roles", None, None);
+                unsafe {
+                    empty_item.setEnabled(false);
+                }
+                menu.addItem(&empty_item);
+            } else {
+                // Show eligible roles sorted with favorites first
+                let sorted_roles = pim_state.sorted_eligible_roles();
+                for role in sorted_roles {
+                    let is_favorite = pim_state.is_favorite(role);
+                    let role_item = create_eligible_role_item(mtm, role, is_favorite);
+                    menu.addItem(&role_item);
+                }
+            }
+        }
+    }
+
+    // Refresh Roles item
+    let refresh_item =
+        create_menu_item(mtm, "↻ Refresh Roles", Some(sel!(refreshPimRoles:)), target);
+    menu.addItem(&refresh_item);
+}
+
+/// Create a menu item for an eligible role with a justification submenu.
+fn create_eligible_role_item(
+    mtm: MainThreadMarker,
+    role: &EligibleRole,
+    is_favorite: bool,
+) -> Retained<NSMenuItem> {
+    // Format: "★ subscription - role" or "☆ subscription - role"
+    let star = if is_favorite { "★" } else { "☆" };
+    let title = format!("{} {}", star, role.display_text());
+
+    let item = create_menu_item(mtm, &title, None, None);
+
+    // Create submenu with justification presets
+    let submenu = create_justification_submenu(mtm, role, is_favorite);
+    item.setSubmenu(Some(&submenu));
+
+    item
+}
+
+/// Create the justification submenu for a role.
+fn create_justification_submenu(
+    mtm: MainThreadMarker,
+    role: &EligibleRole,
+    is_favorite: bool,
+) -> Retained<NSMenu> {
+    let menu = NSMenu::new(mtm);
+    let role_key = role.favorites_key();
+
+    // Add builtin justification presets
+    let presets = JustificationPreset::builtin_presets();
+    for preset in presets {
+        let preset_item = create_preset_menu_item(mtm, &preset, &role_key);
+        menu.addItem(&preset_item);
+    }
+
+    // Separator
+    let separator = NSMenuItem::separatorItem(mtm);
+    menu.addItem(&separator);
+
+    // Favorite toggle
+    let favorite_text = if is_favorite {
+        "Remove from Favorites"
+    } else {
+        "Add to Favorites"
+    };
+    let favorite_item = create_favorite_toggle_item(mtm, favorite_text, &role_key);
+    menu.addItem(&favorite_item);
+
+    menu
+}
+
+/// Create a menu item for a justification preset.
+fn create_preset_menu_item(
+    mtm: MainThreadMarker,
+    preset: &JustificationPreset,
+    role_key: &str,
+) -> Retained<NSMenuItem> {
+    let ns_title = NSString::from_str(&preset.label);
+    let key_equiv = NSString::from_str("");
+
+    let item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &ns_title, None, &key_equiv)
+    };
+
+    // Store role_key and justification for the callback
+    let role_key = role_key.to_string();
+    let justification = preset.justification.clone();
+
+    // Set up click handler using a block
+    unsafe {
+        // We need to use objc2's block support to create a callback
+        // For now, we'll set up a custom target/action mechanism
+        // The actual activation will happen via notification or custom delegate
+
+        // Create a custom action target that captures the role_key and justification
+        // Since we can't easily pass data through NSMenuItem actions, we'll use
+        // the representedObject pattern or a custom approach
+
+        // For simplicity in the MVP, we'll use a workaround:
+        // Store the action data in the menu item's tag or identifier
+        // and look it up when the action is triggered
+
+        // Alternative: Use objc2-block to create a proper block callback
+        // For now, we'll make this a simple clickable item that triggers activation
+
+        // Set a unique tag based on hash
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            role_key.hash(&mut hasher);
+            justification.hash(&mut hasher);
+            hasher.finish() as isize
+        };
+        item.setTag(hash);
+
+        // Store the callback data globally and dispatch when clicked
+        // For the MVP, we'll trigger this via a notification mechanism
+        store_preset_callback(&role_key, &justification, hash);
+    }
+
+    item
+}
+
+/// Create a menu item for toggling favorite status.
+fn create_favorite_toggle_item(
+    mtm: MainThreadMarker,
+    title: &str,
+    role_key: &str,
+) -> Retained<NSMenuItem> {
+    let ns_title = NSString::from_str(title);
+    let key_equiv = NSString::from_str("");
+
+    let item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &ns_title, None, &key_equiv)
+    };
+
+    // Store callback data for favorite toggle
+    let role_key = role_key.to_string();
+    unsafe {
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            role_key.hash(&mut hasher);
+            "favorite".hash(&mut hasher);
+            hasher.finish() as isize
+        };
+        item.setTag(hash);
+        store_favorite_callback(&role_key, hash);
+    }
+
+    item
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PIM Callback Storage (MVP approach)
+// ─────────────────────────────────────────────────────────────────────────────
+
+use std::collections::HashMap;
+use std::sync::RwLock;
+
+/// Global storage for preset callbacks (role_key, justification) by tag.
+static PRESET_CALLBACKS: OnceCell<RwLock<HashMap<isize, (String, String)>>> = OnceCell::new();
+
+/// Global storage for favorite callbacks (role_key) by tag.
+static FAVORITE_CALLBACKS: OnceCell<RwLock<HashMap<isize, String>>> = OnceCell::new();
+
+fn get_preset_callbacks() -> &'static RwLock<HashMap<isize, (String, String)>> {
+    PRESET_CALLBACKS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn get_favorite_callbacks() -> &'static RwLock<HashMap<isize, String>> {
+    FAVORITE_CALLBACKS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn store_preset_callback(role_key: &str, justification: &str, tag: isize) {
+    if let Ok(mut callbacks) = get_preset_callbacks().write() {
+        callbacks.insert(tag, (role_key.to_string(), justification.to_string()));
+    }
+}
+
+fn store_favorite_callback(role_key: &str, tag: isize) {
+    if let Ok(mut callbacks) = get_favorite_callbacks().write() {
+        callbacks.insert(tag, role_key.to_string());
+    }
+}
+
+/// Look up and execute a preset callback by tag.
+#[allow(dead_code)]
+pub fn execute_preset_callback(tag: isize) {
+    if let Ok(callbacks) = get_preset_callbacks().read() {
+        if let Some((role_key, justification)) = callbacks.get(&tag) {
+            send_activate_role(role_key.clone(), justification.clone());
+        }
+    }
+}
+
+/// Look up and execute a favorite callback by tag.
+#[allow(dead_code)]
+pub fn execute_favorite_callback(tag: isize) {
+    if let Ok(callbacks) = get_favorite_callbacks().read() {
+        if let Some(role_key) = callbacks.get(&tag) {
+            send_toggle_favorite(role_key.clone());
+        }
+    }
 }

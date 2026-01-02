@@ -10,6 +10,7 @@ mod config;
 mod error;
 mod keychain;
 mod menubar;
+mod pim;
 mod settings;
 
 use anyhow::{Context, Result};
@@ -19,7 +20,7 @@ use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use app::delegate::AppDelegate;
@@ -82,6 +83,9 @@ fn main() {
     // Create Graph client
     let graph_client = Arc::new(GraphClient::new().expect("Failed to create Graph client"));
 
+    // Create PIM client
+    let pim_client = Arc::new(pim::PimClient::new().expect("Failed to create PIM client"));
+
     // Initialize action channel
     let action_rx = init_action_channel();
 
@@ -104,9 +108,10 @@ fn main() {
     let config_clone = config.clone();
     let oauth_clone = Arc::clone(&oauth_client);
     let graph_clone = Arc::clone(&graph_client);
+    let pim_clone = Arc::clone(&pim_client);
 
     runtime.spawn(async move {
-        run_background_tasks(config_clone, oauth_clone, graph_clone, action_rx).await;
+        run_background_tasks(config_clone, oauth_clone, graph_clone, pim_clone, action_rx).await;
     });
 
     // Try to restore session from Keychain
@@ -117,6 +122,8 @@ fn main() {
     runtime.spawn(async move {
         if let Err(e) = try_restore_session(oauth_restore, graph_restore, &config_restore).await {
             info!("No existing session to restore: {}", e);
+            // Revert UI to signed-out state if restore fails
+            updates::update_signed_out();
         }
     });
 
@@ -203,6 +210,7 @@ async fn run_background_tasks(
     _config: Config,
     oauth_client: Arc<OAuth2Client>,
     graph_client: Arc<GraphClient>,
+    pim_client: Arc<pim::PimClient>,
     mut action_rx: mpsc::Receiver<MenuAction>,
 ) {
     // Channel to receive callback results from the HTTP server
@@ -321,6 +329,118 @@ async fn run_background_tasks(
                         pending_pkce = None;
                         pending_state = None;
                         updates::update_signed_out();
+                    }
+
+                    // PIM Actions
+                    MenuAction::ActivateRole { role_key, justification } => {
+                        info!("Activating role {} with justification: {}", role_key, justification);
+                        // TODO: Implement role activation with PimClient
+                        // For now, just log the action
+                    }
+                    MenuAction::ToggleFavorite { role_key } => {
+                        info!("Toggling favorite for role: {}", role_key);
+                        if let Some(state) = menubar::state::get_app_state() {
+                            let mut pim_state = state.get_pim_state();
+                            pim_state.toggle_favorite(&role_key);
+                            state.set_pim_state(pim_state.clone());
+
+                            // Save to disk
+                            if let Err(e) = pim::save_pim_settings(&pim_state.settings) {
+                                error!("Failed to save PIM settings: {}", e);
+                            }
+
+                            updates::rebuild_menu();
+                        }
+                    }
+                    MenuAction::RefreshPimRoles => {
+                        info!("Refreshing PIM roles");
+                        updates::update_pim_loading();
+
+                        // Get refresh token
+                        let refresh_token = match keychain::get_refresh_token() {
+                            Ok(token) => token,
+                            Err(e) => {
+                                error!("Failed to get refresh token for PIM: {}", e);
+                                updates::update_pim_error("Sign in required".to_string());
+                                continue;
+                            }
+                        };
+
+                        // Get user info for principal ID
+                        let user_id = match menubar::state::get_app_state()
+                            .and_then(|s| s.get_user_info())
+                            .map(|u| u.user_id.clone())
+                        {
+                            Some(id) => id,
+                            None => {
+                                error!("No user info available for PIM");
+                                updates::update_pim_error("User info not available".to_string());
+                                continue;
+                            }
+                        };
+
+                        // Get Graph API token to fetch user's groups
+                        let graph_token = match oauth_client.refresh_token(&refresh_token).await {
+                            Ok(response) => response.access_token,
+                            Err(e) => {
+                                error!("Failed to get Graph API token: {}", e);
+                                updates::update_pim_error("Failed to refresh token".to_string());
+                                continue;
+                            }
+                        };
+
+                        // Fetch user's group memberships
+                        let group_ids: Vec<String> = match graph_client.get_user_groups(&graph_token).await {
+                            Ok(groups) => {
+                                info!("User is member of {} groups", groups.len());
+                                groups.into_iter().map(|g| g.id).collect()
+                            }
+                            Err(e) => {
+                                warn!("Failed to fetch user groups: {} - continuing with user ID only", e);
+                                vec![]
+                            }
+                        };
+
+                        // Build list of all principal IDs (user + groups)
+                        let mut principal_ids = vec![user_id.clone()];
+                        principal_ids.extend(group_ids);
+                        info!("Checking PIM roles for {} principal IDs", principal_ids.len());
+
+                        // Get Management API token
+                        let mgmt_token = match oauth_client.get_management_token(&refresh_token).await {
+                            Ok(response) => response.access_token,
+                            Err(e) => {
+                                error!("Failed to get Management API token: {}", e);
+                                updates::update_pim_permission_denied(
+                                    "PIM access not available. Check Azure AD permissions.".to_string()
+                                );
+                                continue;
+                            }
+                        };
+
+                        // Fetch eligible roles for user and all groups
+                        match pim_client.get_all_eligible_roles(&mgmt_token, &principal_ids).await {
+                            Ok(roles) => {
+                                info!("Found {} eligible PIM roles", roles.len());
+                                updates::update_pim_eligible_roles(roles);
+                            }
+                            Err(e) => {
+                                error!("Failed to fetch PIM roles: {}", e);
+                                updates::update_pim_error(format!("Failed to fetch roles: {}", e));
+                            }
+                        }
+
+                        // Also fetch active assignments for user and all groups
+                        match pim_client.get_active_assignments(&mgmt_token, &principal_ids).await {
+                            Ok(assignments) => {
+                                info!("Found {} active PIM assignments", assignments.len());
+                                updates::update_pim_active_assignments(assignments);
+                            }
+                            Err(e) => {
+                                error!("Failed to fetch active assignments: {}", e);
+                                // Don't update error - roles may still be available
+                            }
+                        }
                     }
                 }
             }

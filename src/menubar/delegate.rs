@@ -40,6 +40,7 @@ static ACTION_SENDER: OnceCell<mpsc::Sender<MenuAction>> = OnceCell::new();
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum MenuAction {
+    // Auth actions
     SignIn,
     SignOut,
     RefreshToken,
@@ -48,6 +49,19 @@ pub enum MenuAction {
     ToggleShowExpiry(bool),
     ClearData,
     CancelSignIn,
+
+    // PIM actions
+    /// Activate a role with justification
+    ActivateRole {
+        role_key: String,
+        justification: String,
+    },
+    /// Toggle favorite status for a role
+    ToggleFavorite {
+        role_key: String,
+    },
+    /// Refresh PIM roles from Azure
+    RefreshPimRoles,
 }
 
 /// Initialize the action channel.
@@ -66,6 +80,28 @@ fn send_action(action: MenuAction) {
             error!("Failed to send menu action: {}", e);
         }
     }
+}
+
+/// Send a PIM role activation action.
+///
+/// This is called from the menu builder when a role's justification preset is clicked.
+pub fn send_activate_role(role_key: String, justification: String) {
+    info!(
+        "Activating role {} with justification: {}",
+        role_key, justification
+    );
+    send_action(MenuAction::ActivateRole {
+        role_key,
+        justification,
+    });
+}
+
+/// Send a toggle favorite action.
+///
+/// This is called from the menu builder when the favorite toggle is clicked.
+pub fn send_toggle_favorite(role_key: String) {
+    info!("Toggling favorite for role: {}", role_key);
+    send_action(MenuAction::ToggleFavorite { role_key });
 }
 
 // Define the MenuActionTarget class that receives menu item actions
@@ -135,6 +171,12 @@ declare_class!(
         fn cancel_sign_in(&self, _sender: &NSObject) {
             info!("Cancel Sign In clicked");
             send_action(MenuAction::CancelSignIn);
+        }
+
+        #[method(refreshPimRoles:)]
+        fn refresh_pim_roles(&self, _sender: &NSObject) {
+            info!("Refresh PIM Roles clicked");
+            send_action(MenuAction::RefreshPimRoles);
         }
     }
 );

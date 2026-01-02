@@ -17,6 +17,9 @@ pub enum AppError {
     #[error("API error: {0}")]
     Api(#[from] ApiError),
 
+    #[error("PIM error: {0}")]
+    Pim(#[from] PimError),
+
     #[error("Configuration error: {0}")]
     Config(String),
 
@@ -91,6 +94,61 @@ pub enum ApiError {
     RateLimited,
 }
 
+/// PIM (Privileged Identity Management) errors.
+#[derive(Error, Debug)]
+#[allow(dead_code)] // Full PIM integration pending
+pub enum PimError {
+    #[error("PIM API permission denied: {0}")]
+    PermissionDenied(String),
+
+    #[error("Role activation failed: {0}")]
+    ActivationFailed(String),
+
+    #[error("Role not found: {0}")]
+    RoleNotFound(String),
+
+    #[error("Role is already active")]
+    RoleAlreadyActive,
+
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+
+    #[error("Invalid API response: {0}")]
+    InvalidResponse(String),
+
+    #[error("Unauthorized (token expired)")]
+    Unauthorized,
+
+    #[error("Forbidden (insufficient permissions)")]
+    Forbidden,
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[allow(dead_code)] // Full PIM integration pending
+impl PimError {
+    /// Returns a user-friendly message for display in the UI.
+    pub fn user_message(&self) -> &str {
+        match self {
+            Self::PermissionDenied(_) => "PIM access required. Request permissions from IT.",
+            Self::ActivationFailed(_) => "Failed to activate role. Please try again.",
+            Self::RoleNotFound(_) => "Role not found. Try refreshing the role list.",
+            Self::RoleAlreadyActive => "This role is already active.",
+            Self::Network(_) => "Network error. Check your connection.",
+            Self::InvalidResponse(_) => "Unexpected response from Azure. Please try again.",
+            Self::Unauthorized => "Session expired. Please sign in again.",
+            Self::Forbidden => "Insufficient permissions for this operation.",
+            Self::Io(_) => "Failed to save settings.",
+        }
+    }
+
+    /// Returns true if this error should trigger a sign-out.
+    pub fn requires_sign_out(&self) -> bool {
+        matches!(self, Self::Unauthorized)
+    }
+}
+
 impl AppError {
     /// Returns a user-friendly message for display in the UI.
     #[allow(dead_code)]
@@ -110,6 +168,7 @@ impl AppError {
             Self::Api(ApiError::Unauthorized) => "Authentication expired. Sign in again.",
             Self::Api(ApiError::Forbidden) => "Insufficient permissions for this operation.",
             Self::Api(ApiError::RateLimited) => "Too many requests. Please wait a moment.",
+            Self::Pim(e) => e.user_message(),
             Self::Network(_) => "Network error. Check your connection.",
             Self::Config(_) => "Configuration error. Please check settings.",
             _ => "An error occurred. Please try again.",
@@ -121,7 +180,9 @@ impl AppError {
     pub fn requires_sign_out(&self) -> bool {
         matches!(
             self,
-            Self::Auth(AuthError::TokenRefreshFailed(_)) | Self::Api(ApiError::Unauthorized)
+            Self::Auth(AuthError::TokenRefreshFailed(_))
+                | Self::Api(ApiError::Unauthorized)
+                | Self::Pim(PimError::Unauthorized)
         )
     }
 }

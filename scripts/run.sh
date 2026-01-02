@@ -59,5 +59,5 @@ echo "Launching $APP_NAME..."
 echo "(Use Ctrl+C to stop, or quit from the menu bar)"
 echo ""
 
-# Run the app bundle
-open -W "$APP_BUNDLE"
+# Run the binary directly (open -W doesn't wait for LSUIElement apps)
+exec "$MACOS_DIR/azurepim"

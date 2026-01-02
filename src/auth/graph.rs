@@ -90,6 +90,61 @@ impl GraphClient {
             status => Err(ApiError::GraphRequestFailed(format!("HTTP {}", status))),
         }
     }
+
+    /// Fetch the current user's group memberships (security groups and Microsoft 365 groups).
+    /// Returns a list of group IDs that the user is a member of.
+    pub async fn get_user_groups(&self, access_token: &str) -> Result<Vec<GroupMembership>, ApiError> {
+        let mut all_groups = Vec::new();
+        let mut next_link: Option<String> = None;
+        let initial_url = format!(
+            "{}/me/memberOf?$select=id,displayName&$filter=isof('microsoft.graph.group')",
+            GRAPH_BASE_URL
+        );
+
+        loop {
+            let url = next_link.as_ref().unwrap_or(&initial_url);
+
+            let response = self
+                .http_client
+                .get(url)
+                .bearer_auth(access_token)
+                .send()
+                .await
+                .map_err(|e| ApiError::GraphRequestFailed(e.to_string()))?;
+
+            match response.status().as_u16() {
+                200 => {
+                    let groups_response: GroupMembershipResponse = response
+                        .json()
+                        .await
+                        .map_err(|e| ApiError::ParseFailed(e.to_string()))?;
+
+                    // Filter to only include groups (not roles or other directory objects)
+                    for item in groups_response.value {
+                        if item.odata_type == Some("#microsoft.graph.group".to_string()) {
+                            all_groups.push(GroupMembership {
+                                id: item.id,
+                                display_name: item.display_name,
+                            });
+                        }
+                    }
+
+                    // Check for pagination
+                    if let Some(link) = groups_response.odata_next_link {
+                        next_link = Some(link);
+                    } else {
+                        break;
+                    }
+                }
+                401 => return Err(ApiError::Unauthorized),
+                403 => return Err(ApiError::Forbidden),
+                429 => return Err(ApiError::RateLimited),
+                status => return Err(ApiError::GraphRequestFailed(format!("HTTP {}", status))),
+            }
+        }
+
+        Ok(all_groups)
+    }
 }
 
 impl Default for GraphClient {
@@ -183,9 +238,38 @@ pub struct VerifiedDomain {
     pub is_initial: Option<bool>,
 }
 
+/// Group membership response from /me/memberOf.
+#[derive(Debug, Deserialize)]
+struct GroupMembershipResponse {
+    value: Vec<DirectoryObject>,
+    #[serde(rename = "@odata.nextLink")]
+    odata_next_link: Option<String>,
+}
+
+/// Directory object from memberOf response.
+#[derive(Debug, Deserialize)]
+struct DirectoryObject {
+    id: String,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+    #[serde(rename = "@odata.type")]
+    odata_type: Option<String>,
+}
+
+/// Group membership info.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupMembership {
+    /// Group's unique object ID.
+    pub id: String,
+    /// Group's display name.
+    pub display_name: Option<String>,
+}
+
 /// Combined user info for UI display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInfo {
+    /// User's unique object ID (principal ID for PIM).
+    pub user_id: String,
     pub display_name: String,
     pub email: String,
     pub tenant_id: String,
@@ -196,6 +280,7 @@ impl UserInfo {
     /// Create UserInfo from profile and organization.
     pub fn from_profile_and_org(profile: UserProfile, org: Organization) -> Self {
         Self {
+            user_id: profile.id.clone(),
             display_name: profile.display_name_or_upn(),
             email: profile.email(),
             tenant_id: org.id.clone(),
@@ -256,6 +341,7 @@ mod tests {
     #[test]
     fn test_user_info_serialization() {
         let info = UserInfo {
+            user_id: "user-object-id".into(),
             display_name: "Test User".into(),
             email: "test@example.com".into(),
             tenant_id: "abc-123".into(),
@@ -265,6 +351,7 @@ mod tests {
         let json = info.to_json().unwrap();
         let restored = UserInfo::from_json(&json).unwrap();
 
+        assert_eq!(restored.user_id, info.user_id);
         assert_eq!(restored.display_name, info.display_name);
         assert_eq!(restored.email, info.email);
     }

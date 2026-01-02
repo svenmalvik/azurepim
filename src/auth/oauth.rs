@@ -138,7 +138,9 @@ impl OAuth2Client {
 
         if !response.status().is_success() {
             let status = response.status();
-            // Don't expose raw Azure error details - just log status code
+            // Log error details for debugging (doesn't expose to user)
+            let error_body = response.text().await.unwrap_or_default();
+            tracing::error!("Token exchange failed: HTTP {} - {}", status, error_body);
             return Err(AuthError::TokenExchangeFailed(format!(
                 "HTTP {}",
                 status.as_u16()
@@ -177,7 +179,9 @@ impl OAuth2Client {
 
         if !response.status().is_success() {
             let status = response.status();
-            // Don't expose raw Azure error details - just log status code
+            // Log error details for debugging (doesn't expose to user)
+            let error_body = response.text().await.unwrap_or_default();
+            tracing::error!("Token refresh failed: HTTP {} - {}", status, error_body);
             return Err(AuthError::TokenRefreshFailed(format!(
                 "HTTP {}",
                 status.as_u16()
@@ -189,6 +193,62 @@ impl OAuth2Client {
             .await
             .map_err(|e| AuthError::TokenRefreshFailed(e.to_string()))?;
 
+        Ok(token_response)
+    }
+
+    /// Get an access token for Azure Management API using a refresh token.
+    ///
+    /// Azure AD requires separate tokens for different resources (Graph vs Management API).
+    /// This uses the refresh token to acquire a token specifically for Azure Management API.
+    pub async fn get_management_token(
+        &self,
+        refresh_token: &str,
+    ) -> Result<TokenResponse, AuthError> {
+        let token_endpoint = format!(
+            "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
+            self.tenant
+        );
+
+        // Request token for Azure Management API resource
+        let scope = "https://management.azure.com/.default offline_access";
+
+        let params = [
+            ("client_id", self.client_id.as_str()),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("scope", scope),
+        ];
+
+        tracing::debug!("Requesting Management API token");
+
+        let response = self
+            .http_client
+            .post(&token_endpoint)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| AuthError::TokenRefreshFailed(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            tracing::error!(
+                "Management API token request failed: HTTP {} - {}",
+                status,
+                error_body
+            );
+            return Err(AuthError::TokenRefreshFailed(format!(
+                "Management API token: HTTP {}",
+                status.as_u16()
+            )));
+        }
+
+        let token_response: TokenResponse = response
+            .json()
+            .await
+            .map_err(|e| AuthError::TokenRefreshFailed(e.to_string()))?;
+
+        tracing::info!("Successfully acquired Management API token");
         Ok(token_response)
     }
 }

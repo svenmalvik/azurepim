@@ -1,7 +1,8 @@
 //! Application state management for the menu bar.
 
 use crate::auth::graph::UserInfo;
-use chrono::{DateTime, Utc};
+use crate::pim::{ActiveAssignment, EligibleRole, PimApiStatus, PimSettings};
+use chrono::{DateTime, Duration, Utc};
 use once_cell::sync::OnceCell;
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +34,8 @@ pub struct AppState {
     pub token_expiry: Mutex<Option<DateTime<Utc>>>,
     /// Settings.
     pub settings: Mutex<Settings>,
+    /// PIM state.
+    pub pim_state: Mutex<PimState>,
 }
 
 impl AppState {
@@ -43,6 +46,7 @@ impl AppState {
             user_info: Mutex::new(None),
             token_expiry: Mutex::new(None),
             settings: Mutex::new(Settings::default()),
+            pim_state: Mutex::new(PimState::default()),
         }
     }
 
@@ -92,6 +96,58 @@ impl AppState {
         self.set_auth_state(AuthState::SignedOut);
         self.set_user_info(None);
         self.set_token_expiry(None);
+    }
+
+    /// Get the PIM state.
+    pub fn get_pim_state(&self) -> PimState {
+        self.pim_state.lock().unwrap().clone()
+    }
+
+    /// Set the PIM state.
+    pub fn set_pim_state(&self, state: PimState) {
+        *self.pim_state.lock().unwrap() = state;
+    }
+
+    /// Update PIM eligible roles.
+    pub fn set_pim_eligible_roles(&self, roles: Vec<EligibleRole>) {
+        let mut pim = self.pim_state.lock().unwrap();
+        pim.eligible_roles = roles;
+        pim.roles_cached_at = Some(Utc::now());
+        pim.api_status = PimApiStatus::Available;
+    }
+
+    /// Update PIM active assignments.
+    pub fn set_pim_active_assignments(&self, assignments: Vec<ActiveAssignment>) {
+        let mut pim = self.pim_state.lock().unwrap();
+        pim.active_assignments = assignments;
+    }
+
+    /// Get PIM settings.
+    #[allow(dead_code)] // Full PIM integration pending
+    pub fn get_pim_settings(&self) -> PimSettings {
+        self.pim_state.lock().unwrap().settings.clone()
+    }
+
+    /// Update PIM settings.
+    #[allow(dead_code)] // Full PIM integration pending
+    pub fn set_pim_settings(&self, settings: PimSettings) {
+        self.pim_state.lock().unwrap().settings = settings;
+    }
+
+    /// Get active role count for badge.
+    #[allow(dead_code)] // Full PIM integration pending
+    pub fn get_active_role_count(&self) -> usize {
+        self.pim_state.lock().unwrap().active_assignments.len()
+    }
+
+    /// Check if any role is expiring soon.
+    #[allow(dead_code)] // Full PIM integration pending
+    pub fn has_expiring_roles(&self) -> bool {
+        let pim = self.pim_state.lock().unwrap();
+        let threshold = pim.settings.expiry_warning_minutes as i64;
+        pim.active_assignments
+            .iter()
+            .any(|a| a.is_expiring_soon(threshold))
     }
 }
 
@@ -155,6 +211,93 @@ impl Default for Settings {
             auto_launch: true,
             show_expiry: true,
         }
+    }
+}
+
+/// PIM (Privileged Identity Management) state.
+#[derive(Debug, Clone)]
+pub struct PimState {
+    /// Cached eligible roles (refreshed on demand, cached for 1 hour).
+    pub eligible_roles: Vec<EligibleRole>,
+    /// Currently active role assignments.
+    pub active_assignments: Vec<ActiveAssignment>,
+    /// When eligible roles were last fetched (for cache TTL).
+    pub roles_cached_at: Option<DateTime<Utc>>,
+    /// PIM settings (including favorites).
+    pub settings: PimSettings,
+    /// Current PIM API status.
+    pub api_status: PimApiStatus,
+}
+
+impl Default for PimState {
+    fn default() -> Self {
+        Self {
+            eligible_roles: vec![],
+            active_assignments: vec![],
+            roles_cached_at: None,
+            settings: PimSettings::default(),
+            api_status: PimApiStatus::Unknown,
+        }
+    }
+}
+
+impl PimState {
+    /// Get eligible roles sorted with favorites first.
+    pub fn sorted_eligible_roles(&self) -> Vec<&EligibleRole> {
+        let mut roles: Vec<_> = self.eligible_roles.iter().collect();
+        let favorites = &self.settings.favorite_role_keys;
+
+        roles.sort_by(|a, b| {
+            let a_is_fav = favorites.contains(&a.favorites_key());
+            let b_is_fav = favorites.contains(&b.favorites_key());
+
+            match (a_is_fav, b_is_fav) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.display_text().cmp(&b.display_text()),
+            }
+        });
+
+        roles
+    }
+
+    /// Check if a role is favorited.
+    pub fn is_favorite(&self, role: &EligibleRole) -> bool {
+        self.settings
+            .favorite_role_keys
+            .contains(&role.favorites_key())
+    }
+
+    /// Check if cache is still valid (within 1 hour).
+    #[allow(dead_code)] // Full PIM integration pending
+    pub fn is_cache_valid(&self) -> bool {
+        match self.roles_cached_at {
+            Some(cached_at) => {
+                let elapsed = Utc::now() - cached_at;
+                elapsed < Duration::hours(1)
+            }
+            None => false,
+        }
+    }
+
+    /// Get active role count for badge.
+    #[allow(dead_code)] // Full PIM integration pending
+    pub fn active_role_count(&self) -> usize {
+        self.active_assignments.len()
+    }
+
+    /// Check if any role is expiring soon.
+    #[allow(dead_code)] // Full PIM integration pending
+    pub fn has_expiring_roles(&self) -> bool {
+        let threshold = self.settings.expiry_warning_minutes as i64;
+        self.active_assignments
+            .iter()
+            .any(|a| a.is_expiring_soon(threshold))
+    }
+
+    /// Toggle favorite status for a role.
+    pub fn toggle_favorite(&mut self, role_key: &str) {
+        self.settings.toggle_favorite(role_key);
     }
 }
 
