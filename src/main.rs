@@ -214,6 +214,14 @@ async fn run_background_tasks(
                 match action {
                     MenuAction::SignIn => {
                         info!("Starting sign-in flow");
+
+                        // Cancel any existing callback server first
+                        if let Some(ctx) = cancel_tx.take() {
+                            let _ = ctx.send(());
+                            // Brief pause to let the old server release the port
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+
                         updates::update_authenticating();
 
                         // Generate PKCE
@@ -247,6 +255,12 @@ async fn run_background_tasks(
                     }
                     MenuAction::SignOut => {
                         info!("Signing out");
+                        // Cancel any pending callback server
+                        if let Some(ctx) = cancel_tx.take() {
+                            let _ = ctx.send(());
+                        }
+                        pending_pkce = None;
+                        pending_state = None;
                         if let Err(e) = keychain::delete_all() {
                             error!("Failed to clear keychain: {}", e);
                         }
