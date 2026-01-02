@@ -9,11 +9,13 @@ bundle_identifier = "de.malvik.azurepim.desktop"
 [oauth]
 # Azure AD App Registration - Get these from Azure Portal
 # App registrations > Your App > Overview
-client_id = "f6624b3b-a706-4248-8d8d-c538f0eec0ce"
+# Set via AZURE_CLIENT_ID environment variable or .env file
+client_id = "YOUR_AZURE_AD_CLIENT_ID"
 
 # Tenant ID - Get from Azure Portal > Azure Active Directory > Overview
 # Use your specific tenant ID for single-tenant apps
-tenant = "805bc25d-8e64-4ed6-8d24-3883c9068c5a"
+# Set via AZURE_TENANT_ID environment variable or .env file
+tenant = "YOUR_TENANT_ID"
 
 # OAuth redirect URI - must match Azure AD app registration
 # Using localhost for better browser UX (shows success page)

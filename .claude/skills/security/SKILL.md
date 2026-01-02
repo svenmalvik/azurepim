@@ -1,6 +1,6 @@
 ---
 name: security
-description: Apply security best practices for secrets, authentication, data handling, and input validation. Use when implementing security-sensitive code.
+description: Use for security reviews, security audits, or when reviewing code for vulnerabilities. Also use when implementing security-sensitive code involving secrets, authentication, data handling, or input validation.
 ---
 
 # Security Best Practices

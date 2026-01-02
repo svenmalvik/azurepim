@@ -232,20 +232,35 @@ fn send_success_page(stream: &mut TcpStream) {
     let _ = stream.flush();
 }
 
+/// HTML-escape a string to prevent XSS attacks.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 /// Send an error HTML page.
 fn send_error_page(stream: &mut TcpStream, path: &str) {
     // Extract error description if present
     let error_desc = if let Some(start) = path.find("error_description=") {
         let start = start + 18;
-        let end = path[start..].find('&').map(|i| start + i).unwrap_or(path.len());
-        urlencoding::decode(&path[start..end])
+        let end = path[start..]
+            .find('&')
+            .map(|i| start + i)
+            .unwrap_or(path.len());
+        let decoded = urlencoding::decode(&path[start..end])
             .unwrap_or_else(|_| "Authentication failed".into())
-            .to_string()
+            .to_string();
+        // HTML-escape to prevent XSS
+        html_escape(&decoded)
     } else {
         "Authentication was cancelled or failed.".to_string()
     };
 
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -314,7 +329,9 @@ fn send_error_page(stream: &mut TcpStream, path: &str) {
         <p class="hint">You can close this tab and try again.</p>
     </div>
 </body>
-</html>"#, error_desc);
+</html>"#,
+        error_desc
+    );
 
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

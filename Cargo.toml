@@ -36,8 +36,7 @@ security-framework = "2.9"
 tokio = { version = "1", features = ["full", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
-# OAuth2
-oauth2 = "4.4"
+# URL parsing
 url = "2.5"
 
 # Serialization
@@ -63,6 +62,9 @@ urlencoding = "2.1"
 
 # Security
 zeroize = { version = "1.7", features = ["derive"] }
+
+# Environment
+dotenvy = "0.15"
 
 [build-dependencies]
 toml = "0.8"

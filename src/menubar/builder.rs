@@ -62,8 +62,7 @@ impl MenuBarInner {
                 // Use "lock.shield" SF Symbol - represents identity/authentication
                 let symbol_name = NSString::from_str("lock.shield");
 
-                if let Some(image) = NSImage::imageWithSymbolName_variableValue(&symbol_name, 1.0)
-                {
+                if let Some(image) = NSImage::imageWithSymbolName_variableValue(&symbol_name, 1.0) {
                     // Set as template so it adapts to dark/light menu bar
                     image.setTemplate(true);
                     button.setImage(Some(&image));
@@ -111,7 +110,8 @@ impl MenuBar {
             }
 
             // Sign In item
-            let sign_in_item = create_menu_item(mtm, "Sign In to Azure", Some(sel!(signIn:)), target);
+            let sign_in_item =
+                create_menu_item(mtm, "Sign In to Azure", Some(sel!(signIn:)), target);
             menu.addItem(&sign_in_item);
 
             // Separator
@@ -239,11 +239,13 @@ impl MenuBar {
             menu.addItem(&separator);
 
             // Copy Access Token
-            let copy_item = create_menu_item(mtm, "Copy Access Token", Some(sel!(copyToken:)), target);
+            let copy_item =
+                create_menu_item(mtm, "Copy Access Token", Some(sel!(copyToken:)), target);
             menu.addItem(&copy_item);
 
             // Refresh Token
-            let refresh_item = create_menu_item(mtm, "Refresh Token", Some(sel!(refreshToken:)), target);
+            let refresh_item =
+                create_menu_item(mtm, "Refresh Token", Some(sel!(refreshToken:)), target);
             menu.addItem(&refresh_item);
 
             // Sign Out
@@ -340,7 +342,6 @@ impl MenuBar {
             }
         }
     }
-
 }
 
 /// Create a menu item with the given title, action, and optional target.
@@ -378,8 +379,12 @@ fn create_settings_submenu(
     let menu = NSMenu::new(mtm);
 
     // Auto-launch toggle
-    let auto_launch_item =
-        create_menu_item(mtm, "Auto-launch at login", Some(sel!(toggleAutoLaunch:)), target);
+    let auto_launch_item = create_menu_item(
+        mtm,
+        "Auto-launch at login",
+        Some(sel!(toggleAutoLaunch:)),
+        target,
+    );
     // Set checkmark based on current setting
     if let Some(state) = get_app_state() {
         let settings = state.get_settings();
@@ -394,8 +399,12 @@ fn create_settings_submenu(
     menu.addItem(&auto_launch_item);
 
     // Show expiry toggle
-    let show_expiry_item =
-        create_menu_item(mtm, "Show expiry countdown", Some(sel!(toggleShowExpiry:)), target);
+    let show_expiry_item = create_menu_item(
+        mtm,
+        "Show expiry countdown",
+        Some(sel!(toggleShowExpiry:)),
+        target,
+    );
     if let Some(state) = get_app_state() {
         let settings = state.get_settings();
         unsafe {

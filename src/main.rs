@@ -33,6 +33,14 @@ use menubar::state::init_app_state;
 use menubar::updates;
 
 fn main() {
+    // Load .env file (if present) before anything else
+    if let Err(e) = dotenvy::dotenv() {
+        // .env file is optional - only log if it's not a "file not found" error
+        if !e.to_string().contains("not found") {
+            eprintln!("Warning: Failed to load .env file: {}", e);
+        }
+    }
+
     // Initialize logging
     init_logging();
 
