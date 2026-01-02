@@ -473,39 +473,24 @@ fn add_pim_section(
         menu.addItem(&separator);
     }
 
-    // PIM Roles Header with status indicator
-    let header_text = match &pim_state.api_status {
-        PimApiStatus::Loading => "PIM Roles (loading...)",
-        PimApiStatus::Unknown => "PIM Roles",
-        PimApiStatus::Available => "PIM Roles",
-        PimApiStatus::PermissionDenied { .. } => "PIM Roles (no access)",
-        PimApiStatus::Unavailable { .. } => "PIM Roles (error)",
-    };
-    let header = create_menu_item(mtm, header_text, None, None);
-    unsafe {
-        header.setEnabled(false);
-    }
-    menu.addItem(&header);
-
-    // Handle different states
+    // Handle different API states
     match &pim_state.api_status {
         PimApiStatus::Loading => {
-            // Show loading indicator
-            let loading_item = create_menu_item(mtm, "  Loading roles...", None, None);
+            let loading_item = create_menu_item(mtm, "PIM Roles (loading...)", None, None);
             unsafe {
                 loading_item.setEnabled(false);
             }
             menu.addItem(&loading_item);
         }
         PimApiStatus::PermissionDenied { message } => {
-            let error_item = create_menu_item(mtm, &format!("  {}", message), None, None);
+            let error_item = create_menu_item(mtm, &format!("PIM: {}", message), None, None);
             unsafe {
                 error_item.setEnabled(false);
             }
             menu.addItem(&error_item);
         }
         PimApiStatus::Unavailable { error } => {
-            let error_item = create_menu_item(mtm, &format!("  {}", error), None, None);
+            let error_item = create_menu_item(mtm, &format!("PIM: {}", error), None, None);
             unsafe {
                 error_item.setEnabled(false);
             }
@@ -513,18 +498,38 @@ fn add_pim_section(
         }
         PimApiStatus::Unknown | PimApiStatus::Available => {
             if pim_state.eligible_roles.is_empty() {
-                let empty_item = create_menu_item(mtm, "  No eligible roles", None, None);
+                let empty_item = create_menu_item(mtm, "No eligible PIM roles", None, None);
                 unsafe {
                     empty_item.setEnabled(false);
                 }
                 menu.addItem(&empty_item);
             } else {
-                // Show eligible roles sorted with favorites first
-                let sorted_roles = pim_state.sorted_eligible_roles();
-                for role in sorted_roles {
-                    let is_favorite = pim_state.is_favorite(role);
-                    let role_item = create_eligible_role_item(mtm, role, is_favorite);
-                    menu.addItem(&role_item);
+                // ★ Favorites section (flat, at top for quick access)
+                let favorites = pim_state.favorite_roles();
+                if !favorites.is_empty() {
+                    let fav_header = create_menu_item(mtm, "★ Favorites", None, None);
+                    unsafe {
+                        fav_header.setEnabled(false);
+                    }
+                    menu.addItem(&fav_header);
+
+                    for role in favorites {
+                        let role_item = create_role_menu_item(mtm, role, true);
+                        menu.addItem(&role_item);
+                    }
+
+                    // Separator after favorites
+                    let separator = NSMenuItem::separatorItem(mtm);
+                    menu.addItem(&separator);
+                }
+
+                // Eligible Roles submenu (grouped by subscription)
+                let roles_by_sub = pim_state.roles_by_subscription();
+                if !roles_by_sub.is_empty() {
+                    let eligible_item = create_menu_item(mtm, "Eligible Roles", None, None);
+                    let eligible_submenu = create_eligible_roles_submenu(mtm, &roles_by_sub, pim_state);
+                    eligible_item.setSubmenu(Some(&eligible_submenu));
+                    menu.addItem(&eligible_item);
                 }
             }
         }
@@ -536,16 +541,61 @@ fn add_pim_section(
     menu.addItem(&refresh_item);
 }
 
-/// Create a menu item for an eligible role with a justification submenu.
-fn create_eligible_role_item(
+/// Create the "Eligible Roles" submenu with subscriptions as submenus.
+fn create_eligible_roles_submenu(
+    mtm: MainThreadMarker,
+    roles_by_subscription: &[(&str, Vec<&EligibleRole>)],
+    pim_state: &PimState,
+) -> Retained<NSMenu> {
+    let menu = NSMenu::new(mtm);
+
+    for (subscription_name, roles) in roles_by_subscription {
+        if roles.is_empty() {
+            continue;
+        }
+
+        // Subscription as a submenu item
+        let sub_item = create_menu_item(mtm, subscription_name, None, None);
+        let sub_menu = NSMenu::new(mtm);
+
+        // Add roles within this subscription
+        for role in roles {
+            let is_favorite = pim_state.is_favorite(role);
+            let role_item = create_role_menu_item_short(mtm, role, is_favorite);
+            sub_menu.addItem(&role_item);
+        }
+
+        sub_item.setSubmenu(Some(&sub_menu));
+        menu.addItem(&sub_item);
+    }
+
+    menu
+}
+
+/// Create a menu item for a role (full display: "subscription - role").
+fn create_role_menu_item(
     mtm: MainThreadMarker,
     role: &EligibleRole,
     is_favorite: bool,
 ) -> Retained<NSMenuItem> {
-    // Format: "★ subscription - role" or "☆ subscription - role"
-    let star = if is_favorite { "★" } else { "☆" };
-    let title = format!("{} {}", star, role.display_text());
+    let title = format!("  {} - {}", role.subscription_name, role.role_name);
+    let item = create_menu_item(mtm, &title, None, None);
 
+    // Create submenu with justification presets
+    let submenu = create_justification_submenu(mtm, role, is_favorite);
+    item.setSubmenu(Some(&submenu));
+
+    item
+}
+
+/// Create a menu item for a role (short display: just role name, used within subscription submenu).
+fn create_role_menu_item_short(
+    mtm: MainThreadMarker,
+    role: &EligibleRole,
+    is_favorite: bool,
+) -> Retained<NSMenuItem> {
+    let star = if is_favorite { "★ " } else { "" };
+    let title = format!("{}{}", star, role.role_name);
     let item = create_menu_item(mtm, &title, None, None);
 
     // Create submenu with justification presets

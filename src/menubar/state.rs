@@ -243,6 +243,7 @@ impl Default for PimState {
 
 impl PimState {
     /// Get eligible roles sorted with favorites first.
+    #[allow(dead_code)] // May be used for alternate menu layouts
     pub fn sorted_eligible_roles(&self) -> Vec<&EligibleRole> {
         let mut roles: Vec<_> = self.eligible_roles.iter().collect();
         let favorites = &self.settings.favorite_role_keys;
@@ -298,6 +299,41 @@ impl PimState {
     /// Toggle favorite status for a role.
     pub fn toggle_favorite(&mut self, role_key: &str) {
         self.settings.toggle_favorite(role_key);
+    }
+
+    /// Get favorite roles only.
+    pub fn favorite_roles(&self) -> Vec<&EligibleRole> {
+        self.eligible_roles
+            .iter()
+            .filter(|role| self.is_favorite(role))
+            .collect()
+    }
+
+    /// Get non-favorite roles grouped by subscription name.
+    /// Returns subscriptions sorted alphabetically, with roles sorted by role_name within each.
+    pub fn roles_by_subscription(&self) -> Vec<(&str, Vec<&EligibleRole>)> {
+        use std::collections::BTreeMap;
+
+        // Group by subscription name (BTreeMap keeps keys sorted)
+        let mut grouped: BTreeMap<&str, Vec<&EligibleRole>> = BTreeMap::new();
+
+        for role in &self.eligible_roles {
+            // Skip favorites - they're shown separately
+            if self.is_favorite(role) {
+                continue;
+            }
+            grouped
+                .entry(&role.subscription_name)
+                .or_default()
+                .push(role);
+        }
+
+        // Sort roles within each subscription by role name
+        for roles in grouped.values_mut() {
+            roles.sort_by(|a, b| a.role_name.cmp(&b.role_name));
+        }
+
+        grouped.into_iter().collect()
     }
 }
 
